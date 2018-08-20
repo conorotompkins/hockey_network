@@ -1,0 +1,82 @@
+---
+title: "player_war_network"
+author: "Conor Tompkins"
+date: "August 19, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(tidygraph)
+library(ggraph)
+library(janitor)
+library(broom)
+
+set_graph_style()
+```
+
+```{r}
+df <- read_csv("data/EW_WAR.csv") %>% 
+  clean_names() %>% 
+    mutate(id = str_c(player, team, season, sep = ", ")) %>% 
+    filter(toi_all >= 1000,
+           position == 1,
+           season == "20172018")
+  
+df %>% 
+  count(id, sort = TRUE)
+```
+
+```{r}
+df %>% 
+  select(id, ev_gar:pens_gar) %>%
+  mutate_at(vars(ev_gar:pens_gar), scale) -> df
+```
+
+```{r}
+df %>% 
+  column_to_rownames(var = "id") -> df_dist
+
+df_dist
+rownames(df_dist) %>% 
+  head()
+
+df_dist <- dist(df_dist, "euclidean", upper = TRUE)
+head(df_dist)
+
+df_dist %>% 
+  tidy() %>% 
+  arrange(desc(distance)) -> df_dist
+
+df_dist
+```
+
+```{r}
+distance_filter <- 2
+
+df_dist %>% 
+  mutate(distance = distance^2) %>% 
+  filter(distance <= distance_filter) %>%
+  as_tbl_graph() %>% 
+  mutate(centrality = centrality_authority()) %>% 
+  ggraph(layout = "drl") +
+  #ggraph(layout = "kk", maxiter = 1000) +
+    geom_edge_fan(aes(edge_alpha = distance, edge_width = distance)) + 
+    geom_node_label(aes(label = name)) +
+    #geom_node_point(aes(size = centrality, color = centrality)) +
+    scale_edge_alpha_continuous("Euclidean distance ^2", range = c(.1, 0)) +
+    scale_edge_width_continuous("Euclidean distance ^2", range = c(1, 0)) +
+    scale_size_continuous(range = c(2, 0)) +
+    scale_color_viridis(begin = 0, end = 1) +
+    labs(title = "",
+       subtitle = "EvolvingWild WAR components",
+       x = NULL,
+       y = NULL,
+       caption = "@conor_tompkins")
+```
