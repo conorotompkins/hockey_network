@@ -65,11 +65,12 @@ df_dist %>%
   filter(distance <= distance_filter) %>%
   as_tbl_graph() %>% 
   mutate(centrality = centrality_authority()) %>% 
+  arrange(desc(centrality)) %>% 
   ggraph(layout = "drl") +
   #ggraph(layout = "kk", maxiter = 1000) +
     geom_edge_fan(aes(edge_alpha = distance, edge_width = distance)) + 
-    geom_node_label(aes(label = name)) +
-    #geom_node_point(aes(size = centrality, color = centrality)) +
+    #geom_node_label(aes(label = name)) +
+    geom_node_point(aes(size = centrality, color = centrality)) +
     scale_edge_alpha_continuous("Euclidean distance ^2", range = c(.1, 0)) +
     scale_edge_width_continuous("Euclidean distance ^2", range = c(1, 0)) +
     scale_size_continuous(range = c(2, 0)) +
