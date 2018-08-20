@@ -1,0 +1,232 @@
+---
+title: "war_pca_kmeans"
+author: "Conor Tompkins"
+date: "August 20, 2018"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE, 
+                      warning = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(broom)
+library(ggfortify)
+library(viridis)
+library(janitor)
+library(ggrepel)
+
+theme_set(theme_minimal())
+```
+
+```{r}
+read_csv("data/EW_WAR.csv") %>% 
+  clean_names() %>% 
+  mutate(id = str_c(player, team, season, sep = ", ")) %>% 
+  filter(position == 1) -> df
+  
+df %>% 
+  count(id, sort = TRUE)
+
+df %>% 
+  count(position)
+```
+
+```{r}
+df %>% 
+  ggplot(aes(ev_gar, pens_gar)) +
+  geom_point() +
+  geom_smooth()
+
+
+df %>%
+  select(id, ev_gar:pens_gar) %>% 
+  gather(variable, value, -c(id, ev_gar)) %>% 
+  ggplot(aes(ev_gar, value)) +
+  geom_point(alpha = 1) +
+  geom_smooth() +
+  facet_wrap(~variable, scales = "free")
+```
+
+```{r}
+df %>%
+  filter(position == 1) %>% 
+  select(id, toi_ev:sh_gar) %>% 
+  remove_rownames() %>% 
+  column_to_rownames(var = "id") -> df_pca
+```
+
+```{r}
+df_pca %>% 
+  prcomp(scale = TRUE) -> pc
+```
+
+```{r}
+pc %>% 
+  tidy() %>% 
+  head()
+```
+
+```{r}
+pc %>% 
+  tidy("pcs")
+```
+
+```{r}
+pc %>% 
+  augment(data = df_pca) %>% 
+  as_tibble() -> au
+
+au %>% 
+  head()
+```
+
+```{r}
+pc %>% 
+  tidy("pcs") %>%
+  select(-std.dev) %>% 
+  gather(measure, value, -PC) %>% 
+    ggplot(aes(PC, value)) +
+    geom_line() +
+    geom_point() +
+    facet_wrap(~measure) +
+    labs(title = "Variance explained by each principal component",
+         x = "Principal Component",
+         y = NULL) +
+    scale_x_continuous(breaks = 1:6)
+```
+
+```{r}
+df %>% 
+  filter(position == 1) %>% 
+  select(id, toi_ev:pens_gar) %>% 
+  nest() %>% 
+  mutate(pca = map(data, ~ prcomp(.x %>% select(-id), 
+                                  center = TRUE, scale = TRUE)),
+         pca_aug = map2(pca, data, ~augment(.x, data = .y))) -> df_pca2
+```
+
+```{r}
+df_pca2 %>% 
+mutate(
+    pca_graph = map2(
+      .x = pca,
+      .y = data,
+      ~ autoplot(.x, loadings = TRUE, loadings.label = TRUE,
+                 loadings.label.repel = TRUE,
+                 data = .y) +
+        theme_bw() +
+        labs(x = "Principal Component 1",
+             y = "Principal Component 2",
+             title = "First two principal components of PCA on EvolvingWild WAR data")
+    )
+  ) %>%
+  pull(pca_graph)
+```
+
+```{r}
+au %>% 
+  rename(id = .rownames) %>% 
+  gather(variable, value, -c(id)) -> au_long
+
+#st_erase <- function(x, y) {
+#  st_difference(x, st_union(st_combine(y)))
+#}
+#
+#allegheny_water <- area_water("PA", "Allegheny", class = "sf")
+
+#allegheny_geo <- st_erase(allegheny_geo, allegheny_water)
+
+
+#allegheny_geo %>% 
+#  left_join(au %>% rename(NAME = .rownames)) %>% 
+  #gather(variable, value, contains("percent")) %>% 
+ # gather(pc, pc_value, contains(".fitted")) -> allegheny_pca_map
+
+#allegheny_pca_map %>% 
+#  filter(pc %in% c(".fittedPC1", ".fittedPC2")) %>% 
+#  ggplot(aes(fill = pc_value, color = pc_value)) + 
+#  geom_sf() + 
+#  facet_wrap(~pc) +
+#  coord_sf(crs = 26911) + 
+#  scale_fill_viridis("Principal component value", option = "magma") + 
+#  scale_color_viridis("Principal component value", option = "magma") +
+#  labs(title = "Allegheny County",
+#      subtitle = "American Community Survey") +
+#  theme(axis.text = element_blank())
+```
+
+```{r}
+au_long %>% 
+  filter(str_detect(variable, ".fitted")) %>% 
+  spread(variable, value) %>% 
+  select(-id) -> df_kmeans
+```
+
+```{r}
+kclusts <- tibble(k = 1:9) %>%
+  mutate(
+    kclust = map(k, ~kmeans(df_kmeans, .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, df_kmeans)
+  )
+
+kclusts
+```
+
+```{r}
+clusters <- kclusts %>%
+  unnest(tidied)
+
+assignments <- kclusts %>% 
+  unnest(augmented)
+
+clusterings <- kclusts %>%
+  unnest(glanced, .drop = TRUE)
+```
+
+```{r}
+p1 <- ggplot(assignments, aes(.fittedPC1, .fittedPC2)) +
+  geom_point(aes(color = .cluster), alpha = .7) + 
+  facet_wrap(~ k)
+p1
+```
+
+```{r}
+ggplot(clusterings, aes(k, tot.withinss)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = 1:9)
+```
+
+```{r}
+au_long %>% 
+  filter(str_detect(variable, ".fitted")) %>% 
+  spread(variable, value) %>% 
+  select(-id) -> df_kmeans
+
+kclust <- kmeans(df_kmeans, centers = 2)
+
+kclust %>% 
+  augment(au_long %>% 
+    filter(str_detect(variable, ".fitted")) %>% 
+    spread(variable, value)) -> df_kmeans
+```
+
+```{r fig.height=12, fig.width=12}
+df_kmeans %>% 
+    mutate(outlier = case_when(.fittedPC1 <= -5 | abs(.fittedPC2) >= 5 ~ TRUE)) %>% 
+  filter(outlier == TRUE) -> df_kmeans_outlier
+
+df_kmeans %>% 
+  ggplot(aes(.fittedPC1, .fittedPC2)) +
+  geom_point(alpha = .2) +
+  geom_label_repel(data = df_kmeans_outlier %>% filter(outlier == TRUE), aes(label = id), size = 2) +
+  labs(title = "EvolvingWild GAR",
+       subtitle = "EV/PP/SH GAR and TOI")
+```
