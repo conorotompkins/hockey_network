@@ -26,36 +26,50 @@ theme_set(theme_minimal())
 ```{r}
 read_csv("data/EW_WAR.csv") %>% 
   clean_names() %>% 
-  mutate(id = str_c(player, team, season, sep = ", ")) %>% 
-  filter(position == 1) -> df
+  arrange(desc(war)) %>% 
+  mutate(position = fct_inorder(as.character(position)),
+         id = str_c(player, team, season, sep = ", "),
+         id = as.factor(id)) %>% 
+  select(id, position, war) -> df_lookup
+
+read_csv("data/EW_WAR.csv") %>% 
+  clean_names() %>% 
+  filter(toi_all >= 1500) %>% 
+  mutate(position = fct_inorder(as.character(position)),
+         id = str_c(player, team, season, sep = ", "),
+         ev_gar60 = (ev_gar / toi_ev) * 60,
+         pp_gar60 = (pp_gar / toi_pp) * 60,
+         sh_gar60 = (sh_gar / toi_sh) * 60,
+         pens_gar60 = (pens_gar / toi_ev * 60)) %>% 
+  select(id, position, ev_gar60, pp_gar60, sh_gar60, pens_gar60) -> df
+
+df <- replace(df, is.na(df), 0)
+
+df %>% 
+  select(-position) -> df
   
 df %>% 
   count(id, sort = TRUE)
-
-df %>% 
-  count(position)
 ```
 
 ```{r}
 df %>% 
-  ggplot(aes(ev_gar, pens_gar)) +
+  ggplot(aes(ev_gar60, pens_gar60)) +
   geom_point() +
   geom_smooth()
 
 
 df %>%
-  select(id, ev_gar:pens_gar) %>% 
-  gather(variable, value, -c(id, ev_gar)) %>% 
-  ggplot(aes(ev_gar, value)) +
-  geom_point(alpha = 1) +
+  select(id, ev_gar60:pens_gar60) %>% 
+  gather(variable, value, -c(id, ev_gar60)) %>% 
+  ggplot(aes(ev_gar60, value)) +
+  geom_point(alpha = .1) +
   geom_smooth() +
   facet_wrap(~variable, scales = "free")
 ```
 
 ```{r}
 df %>%
-  filter(position == 1) %>% 
-  select(id, toi_ev:sh_gar) %>% 
   remove_rownames() %>% 
   column_to_rownames(var = "id") -> df_pca
 ```
@@ -102,8 +116,6 @@ pc %>%
 
 ```{r}
 df %>% 
-  filter(position == 1) %>% 
-  select(id, toi_ev:pens_gar) %>% 
   nest() %>% 
   mutate(pca = map(data, ~ prcomp(.x %>% select(-id), 
                                   center = TRUE, scale = TRUE)),
@@ -192,7 +204,7 @@ clusterings <- kclusts %>%
 
 ```{r}
 p1 <- ggplot(assignments, aes(.fittedPC1, .fittedPC2)) +
-  geom_point(aes(color = .cluster), alpha = .7) + 
+  geom_point(aes(color = .cluster), alpha = .2) + 
   facet_wrap(~ k)
 p1
 ```
@@ -215,18 +227,100 @@ kclust <- kmeans(df_kmeans, centers = 2)
 kclust %>% 
   augment(au_long %>% 
     filter(str_detect(variable, ".fitted")) %>% 
-    spread(variable, value)) -> df_kmeans
+    spread(variable, value)) %>% 
+    left_join(df_lookup) -> df_kmeans
 ```
 
-```{r fig.height=12, fig.width=12}
+```{r fig.height=12, fig.width=15}
 df_kmeans %>% 
-    mutate(outlier = case_when(.fittedPC1 <= -5 | abs(.fittedPC2) >= 5 ~ TRUE)) %>% 
+    mutate(outlier = case_when(abs(.fittedPC1) >= 3.5 | abs(.fittedPC2) >= 2.5 ~ TRUE)) %>% 
   filter(outlier == TRUE) -> df_kmeans_outlier
 
 df_kmeans %>% 
-  ggplot(aes(.fittedPC1, .fittedPC2)) +
-  geom_point(alpha = .2) +
-  geom_label_repel(data = df_kmeans_outlier %>% filter(outlier == TRUE), aes(label = id), size = 2) +
+  ggplot(aes(.fittedPC1, .fittedPC2, color = .cluster)) +
+  geom_point(alpha = .4) +
+  geom_label_repel(data = df_kmeans_outlier %>% filter(outlier == TRUE), aes(label = id), size = 3) +
   labs(title = "EvolvingWild GAR",
-       subtitle = "EV/PP/SH GAR and TOI")
+       subtitle = "EV/PP/SH GAR")
+```
+
+```{r}
+df_kmeans %>% 
+  gather(pc, pc_value, -c(id, position, .cluster, war)) %>% 
+  arrange(pc_value) %>% 
+  mutate(id = factor(id)) %>% 
+  group_by(pc, position) %>% 
+  top_n(20, desc(pc_value)) %>% 
+  ggplot(aes(reorder(id, desc(pc_value)), pc_value)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_reverse() +
+  facet_wrap(pc~position, 
+             scale = "free",
+             ncol = 2)
+```
+
+```{r}
+df_kmeans %>% 
+  arrange(.fittedPC1) %>% 
+  mutate(id = factor(id)) %>% 
+  group_by(position) %>% 
+  top_n(20, .fittedPC1) %>% 
+  ggplot(aes(reorder(id, .fittedPC1), .fittedPC1, alpha = war)) +
+  geom_col(color = "black") +
+  coord_flip() +
+  #scale_y_reverse() +
+  facet_wrap(~position, 
+             scale = "free",
+             ncol = 2) +
+  labs(title = "EvolvingWild GAR",
+       subtitle = "Top 20 per position in absolute principle component value")
+```
+
+```{r}
+df_kmeans %>% 
+  arrange(.fittedPC1) %>% 
+  mutate(id = factor(id)) %>% 
+  group_by(position) %>% 
+  top_n(20, desc(.fittedPC1)) %>% 
+  ggplot(aes(reorder(id, desc(.fittedPC1)), .fittedPC1, alpha = war)) +
+  geom_col(color = "black") +
+  coord_flip() +
+  scale_y_reverse() +
+  facet_wrap(~position, 
+             scale = "free",
+             ncol = 2) +
+  labs(title = "EvolvingWild GAR",
+       subtitle = "Top 20 per position in absolute principle component value")
+```
+
+
+```{r}
+df_kmeans %>% 
+  arrange(desc(.fittedPC2)) %>% 
+  mutate(id = factor(id)) %>% 
+  group_by(position) %>% 
+  top_n(20, .fittedPC2) %>% 
+  ggplot(aes(reorder(id, .fittedPC2), .fittedPC2, alpha = war)) +
+  geom_col(color = "grey") +
+  coord_flip() +
+  #scale_y_reverse() +
+  facet_wrap(~position, 
+             scale = "free",
+             ncol = 2)
+```
+
+```{r}
+df_kmeans %>% 
+  arrange(desc(.fittedPC2)) %>% 
+  mutate(id = factor(id)) %>% 
+  group_by(position) %>% 
+  top_n(20, desc(.fittedPC2)) %>% 
+  ggplot(aes(reorder(id, desc(.fittedPC2)), .fittedPC2, alpha = war)) +
+  geom_col(color = "grey") +
+  coord_flip() +
+  scale_y_reverse() +
+  facet_wrap(~position, 
+             scale = "free",
+             ncol = 2)
 ```
