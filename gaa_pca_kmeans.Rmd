@@ -37,7 +37,7 @@ read_csv("data/EW_GAA.csv") %>%
   filter(toi_all >= 500) %>% 
   mutate(position = fct_inorder(as.character(position)),
          id = str_c(player, team, season, sep = ", ")) %>% 
-  select(id, position, evo_aa_60:pens_aa_60 ) -> df
+  select(id, position, evo_aa_60:draw_aa_60 ) -> df
 
 df <- replace(df, is.na(df), 0)
 
@@ -50,13 +50,13 @@ df %>%
 
 ```{r}
 df %>% 
-  ggplot(aes(evo_aa_60, pens_aa_60)) +
+  ggplot(aes(evo_aa_60, draw_aa_60)) +
   geom_point() +
   geom_smooth()
 
 
 df %>%
-  select(id, evo_aa_60:pens_aa_60) %>% 
+  select(id, evo_aa_60:draw_aa_60) %>% 
   gather(variable, value, -c(id, evo_aa_60)) %>% 
   ggplot(aes(evo_aa_60, value)) +
   geom_point(alpha = .1) +
@@ -125,7 +125,7 @@ mutate(
       .x = pca,
       .y = data,
       ~ autoplot(.x, loadings = TRUE, loadings.label = TRUE,
-                 loadings.label.repel = TRUE, loadings.label.size = 7,
+                 loadings.label.repel = TRUE, loadings.label.size = 8,
                  alpha = .5,
                  data = .y) +
         theme_bw() +
@@ -141,32 +141,6 @@ mutate(
 au %>% 
   rename(id = .rownames) %>% 
   gather(variable, value, -c(id)) -> au_long
-
-#st_erase <- function(x, y) {
-#  st_difference(x, st_union(st_combine(y)))
-#}
-#
-#allegheny_water <- area_water("PA", "Allegheny", class = "sf")
-
-#allegheny_geo <- st_erase(allegheny_geo, allegheny_water)
-
-
-#allegheny_geo %>% 
-#  left_join(au %>% rename(NAME = .rownames)) %>% 
-  #gather(variable, value, contains("percent")) %>% 
- # gather(pc, pc_value, contains(".fitted")) -> allegheny_pca_map
-
-#allegheny_pca_map %>% 
-#  filter(pc %in% c(".fittedPC1", ".fittedPC2")) %>% 
-#  ggplot(aes(fill = pc_value, color = pc_value)) + 
-#  geom_sf() + 
-#  facet_wrap(~pc) +
-#  coord_sf(crs = 26911) + 
-#  scale_fill_viridis("Principal component value", option = "magma") + 
-#  scale_color_viridis("Principal component value", option = "magma") +
-#  labs(title = "Allegheny County",
-#      subtitle = "American Community Survey") +
-#  theme(axis.text = element_blank())
 ```
 
 ```{r}
@@ -230,7 +204,7 @@ kclust %>%
 
 ```{r fig.height=12, fig.width=15}
 df_kmeans %>% 
-    mutate(outlier = case_when(abs(.fittedPC1) >= 4 | (.fittedPC2 >= 3 | .fittedPC2 <= -3) ~ TRUE)) %>% 
+    mutate(outlier = case_when(abs(.fittedPC1) >= 4 | abs(.fittedPC2 >= 3.5) ~ TRUE)) %>% 
   filter(outlier == TRUE) -> df_kmeans_outlier
 
 df_kmeans %>% 
@@ -262,7 +236,7 @@ df_kmeans %>%
   arrange(.fittedPC1) %>% 
   mutate(id = factor(id)) %>% 
   group_by(position) %>% 
-  top_n(20, abs(.fittedPC1)) %>% 
+  top_n(20, .fittedPC1) %>% 
   ggplot(aes(reorder(id, .fittedPC1), .fittedPC1, alpha = gaa)) +
   geom_col(color = "black") +
   coord_flip() +
@@ -297,11 +271,11 @@ df_kmeans %>%
   arrange(desc(.fittedPC2)) %>% 
   mutate(id = factor(id)) %>% 
   group_by(position) %>% 
-  top_n(20, abs(.fittedPC2)) %>% 
-  ggplot(aes(reorder(id, .fittedPC2), .fittedPC2, alpha = gaa)) +
+  top_n(20, desc(.fittedPC2)) %>% 
+  ggplot(aes(reorder(id, desc(.fittedPC2)), .fittedPC2, alpha = gaa)) +
   geom_col(color = "black") +
   coord_flip() +
-  #scale_y_reverse() +
+  scale_y_reverse() +
   facet_wrap(~position, 
              scale = "free",
              ncol = 2) +
@@ -311,15 +285,17 @@ df_kmeans %>%
 
 ```{r}
 df_kmeans %>% 
-  arrange(desc(.fittedPC2)) %>% 
+  arrange(.fittedPC2) %>% 
   mutate(id = factor(id)) %>% 
   group_by(position) %>% 
-  top_n(20, desc(.fittedPC2)) %>% 
-  ggplot(aes(reorder(id, desc(.fittedPC2)), .fittedPC2, alpha = gaa)) +
-  geom_col(color = "grey") +
+  top_n(20, .fittedPC2) %>% 
+  ggplot(aes(reorder(id, .fittedPC2), .fittedPC2, alpha = gaa)) +
+  geom_col(color = "black") +
   coord_flip() +
-  scale_y_reverse() +
+  #scale_y_reverse() +
   facet_wrap(~position, 
              scale = "free",
-             ncol = 2)
+             ncol = 2) +
+    labs(title = "EvolvingWild GAA",
+       subtitle = "Top 20 per position in absolute principle component value")
 ```
