@@ -318,6 +318,16 @@ df_kmeans %>%
 ```
 
 ```{r eval = FALSE}
+library(devtools)
+assignInNamespace("version_info", c(devtools:::version_info, list("3.5" = list(version_min = "3.3.0", version_max = "99.99.99", path = "bin"))), "devtools")
+find_rtools() # is TRUE now
+
+
+```
+
+
+
+```{r eval = FALSE}
 library(gganimate)
 library(gapminder)
 
@@ -339,10 +349,10 @@ df_kmeans %>%
   geom_path() +
   geom_label_repel(aes(alpha = season)) +
   facet_wrap(~player) +
-  scale_alpha_discrete(range = c(.3, 1))
-
-
-
+  scale_alpha_discrete(range = c(.3, 1)) +
+  #labs(title = "Player: {player}") +
+  transition_time(as.integer(season)) +
+  ease_aes("linear")
 ```
 
 
