@@ -29,15 +29,17 @@ read_csv("data/EW_GAA.csv") %>%
   arrange(desc(gaa)) %>% 
   mutate(position = fct_inorder(as.character(position)),
          id = str_c(player, team, season, sep = ", "),
-         id = as.factor(id)) %>% 
-  select(id, position, gaa) -> df_lookup
+         id = as.factor(id),
+         season = as.factor(as.character(season))) %>% 
+  select(id, player, season, team, position, gaa) -> df_lookup
 
 read_csv("data/EW_GAA.csv") %>% 
   clean_names() %>% 
   filter(toi_all >= 500) %>% 
   mutate(position = fct_inorder(as.character(position)),
-         id = str_c(player, team, season, sep = ", ")) %>% 
-  select(id, position, evo_aa_60:draw_aa_60 ) -> df
+         id = str_c(player, team, season, sep = ", "),
+         season = as.factor(as.character(season))) %>% 
+  select(id, position, evo_aa_60:draw_aa_60) -> df
 
 df <- replace(df, is.na(df), 0)
 
@@ -217,22 +219,6 @@ df_kmeans %>%
 
 ```{r}
 df_kmeans %>% 
-  gather(pc, pc_value, -c(id, position, .cluster, gaa)) %>% 
-  arrange(pc_value) %>% 
-  mutate(id = factor(id)) %>% 
-  group_by(pc, position) %>% 
-  top_n(20, desc(pc_value)) %>% 
-  ggplot(aes(reorder(id, desc(pc_value)), pc_value)) +
-  geom_col() +
-  coord_flip() +
-  scale_y_reverse() +
-  facet_wrap(pc~position, 
-             scale = "free",
-             ncol = 2)
-```
-
-```{r}
-df_kmeans %>% 
   arrange(.fittedPC1) %>% 
   mutate(id = factor(id)) %>% 
   group_by(position) %>% 
@@ -299,3 +285,65 @@ df_kmeans %>%
     labs(title = "EvolvingWild GAA",
        subtitle = "Top 20 per position in absolute principle component value")
 ```
+
+```{r}
+df_kmeans %>% 
+  gather(pc, pc_value, -c(id, player, season, team, .cluster, position, gaa, .fittedPC1)) %>% 
+  ggplot(aes(.fittedPC1, pc_value, color = .cluster)) +
+  geom_point(alpha = .4) +
+  facet_wrap(~pc)
+```
+
+```{r}
+df_kmeans %>%
+  #filter(season == 20172018) %>% 
+  ggplot(aes(.fittedPC1, .fittedPC2, label = player)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  #geom_point(alpha = .2) +
+  stat_density_2d(aes(fill = stat(level)), geom = "polygon") +
+  #geom_label_repel()
+  facet_wrap(~season)
+```
+
+```{r}
+df_kmeans %>%
+  filter(player %in% c("EVGENI.MALKIN", "SIDNEY.CROSBY", "ALEX.OVECHKIN")) %>% 
+  ggplot(aes(.fittedPC1, .fittedPC2, label = season)) +
+  geom_point() +
+  geom_path() +
+  geom_label_repel(aes(alpha = season)) +
+  facet_wrap(~player) +
+  scale_alpha_discrete(range = c(.3, 1))
+```
+
+```{r eval = FALSE}
+library(gganimate)
+library(gapminder)
+
+ggplot(gapminder, aes(gdpPercap, lifeExp, size = pop, colour = country)) +
+  geom_point(alpha = 0.7, show.legend = FALSE) +
+  scale_colour_manual(values = country_colors) +
+  scale_size(range = c(2, 12)) +
+  scale_x_log10() +
+  facet_wrap(~continent) +
+  # Here comes the gganimate specific bits
+  labs(title = 'Year: {frame_time}', x = 'GDP per capita', y = 'life expectancy') +
+  transition_time(year) +
+  ease_aes('linear')
+
+df_kmeans %>% 
+  filter(player == "SIDNEY.CROSBY") %>% 
+  ggplot(aes(.fittedPC1, .fittedPC2, label = season)) +
+  geom_point() +
+  geom_path() +
+  geom_label_repel(aes(alpha = season)) +
+  facet_wrap(~player) +
+  scale_alpha_discrete(range = c(.3, 1))
+
+
+
+```
+
+
+
