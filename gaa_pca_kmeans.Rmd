@@ -9,8 +9,20 @@ runtime: shiny
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE,
                       message = FALSE, 
-                      warning = FALSE)
+                      warning = FALSE, 
+                      include = FALSE)
 ```
+
+
+##The EvolvingWild GAA/WAR model
+
+##Why PCA
+
+Principle Component Analysis is a dimension reduction method that highlights where the data vary. It can be used to "eyeball" a multi-variable dataframe in a more statistically rigorous manner.
+
+
+##Technical Explanation
+Given a dataframe with 10 variables, PCA will return a dataframe with 10 additional *principle components* as variables. PCA performs computation on the data to identify where the data vary. Then, it reorganizes the data to maximize the variance. Given 10 principal components, the first principal component will have the highest standard deviation, and will explain the most variance of the principal components. The standard deviation and variance explained per principle component decreases per principal component.
 
 ```{r}
 library(tidyverse)
@@ -19,89 +31,97 @@ library(ggfortify)
 library(viridis)
 library(janitor)
 library(ggrepel)
+library(scales)
 
 theme_set(theme_minimal())
+
+toi_filter <- 500
 ```
 
-```{r}
+For this analysis, I am using the EvolvingWild Goals Above Average data. It includes per 60 minutes GAA measurements of the following data:
+
+-evo_aa_60: even-strength offense
+-evd_aa_60: even-strength defense
+-ppo_aa_60: powerplay offense
+-shd_aa_60: shorthanded defense
+-take_aa_60: penalties taken
+-draw_aa_60: penalties drawn
+
+I filter out all players with less than ```{r} toi_filter```. 
+```{r }
 read_csv("data/EW_GAA.csv") %>% 
   clean_names() %>% 
   arrange(desc(gaa)) %>% 
   mutate(position = fct_inorder(as.character(position)),
-         id = str_c(player, team, season, sep = ", "),
-         id = as.factor(id),
-         season = as.factor(as.character(season))) %>% 
-  select(id, player, season, team, position, gaa) -> df_lookup
+       id = str_c(player, team, season, sep = ", "),
+       id = as.factor(id),
+       season = as.factor(as.character(season))) -> data
 
-read_csv("data/EW_GAA.csv") %>% 
-  clean_names() %>% 
-  filter(toi_all >= 500) %>% 
-  mutate(position = fct_inorder(as.character(position)),
-         id = str_c(player, team, season, sep = ", "),
-         season = as.factor(as.character(season))) %>% 
+data %>%  
+  filter(toi_all >= toi_filter) %>% 
   select(id, position, evo_aa_60:draw_aa_60) -> df
 
 df <- replace(df, is.na(df), 0)
 
 df %>% 
   select(-position) -> df
-  
-df %>% 
-  count(id, sort = TRUE)
+
+data %>% 
+  select(id, player, season, team, position, toi_all, gaa) -> df_lookup
+```
+This is a preview of the data:
+```{r}
+df
 ```
 
-```{r}
-df %>% 
-  ggplot(aes(evo_aa_60, draw_aa_60)) +
-  geom_point() +
-  geom_smooth()
-
-
+This graph compares the even-strength offense component (x axis) to the other 5 components (y axes).
+```{r }
 df %>%
   select(id, evo_aa_60:draw_aa_60) %>% 
   gather(variable, value, -c(id, evo_aa_60)) %>% 
   ggplot(aes(evo_aa_60, value)) +
   geom_point(alpha = .1) +
   geom_smooth() +
-  facet_wrap(~variable, scales = "free")
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Evolving Wild GAA components",
+       y = NULL)
 ```
-
-```{r}
+```{r }
 df %>%
   remove_rownames() %>% 
   column_to_rownames(var = "id") -> df_pca
 ```
-
-```{r}
+```{r }
 df_pca %>% 
   prcomp(scale = TRUE) -> pc
 ```
-
-```{r}
+```{r  }
 pc %>% 
   tidy() %>% 
   head()
 ```
 
-```{r}
+```{r }
 pc %>% 
   tidy("pcs")
 ```
-
-```{r}
+```{r }
 pc %>% 
   augment(data = df_pca) %>% 
-  as_tibble() -> au
+  as_tibble() %>% 
+  rownames_to_column(var = "id") -> df_au
 
-au %>% 
+df_au %>% 
   head()
 ```
-
-```{r}
+This shows the variance explained by each principal component
+```{r }
 pc %>% 
   tidy("pcs") %>%
   select(-std.dev) %>% 
   gather(measure, value, -PC) %>% 
+  mutate(measure = case_when(measure == "percent" ~ "Percent",
+                             measure == "cumulative" ~ "Cumulative")) %>% 
     ggplot(aes(PC, value)) +
     geom_line() +
     geom_point() +
@@ -109,10 +129,11 @@ pc %>%
     labs(title = "Variance explained by each principal component",
          x = "Principal Component",
          y = NULL) +
-    scale_x_continuous(breaks = 1:7)
+    scale_x_continuous(breaks = 1:6) +
+    scale_y_continuous(label = percent)
 ```
 
-```{r}
+```{r }
 df %>% 
   nest() %>% 
   mutate(pca = map(data, ~ prcomp(.x %>% select(-id), 
@@ -120,7 +141,7 @@ df %>%
          pca_aug = map2(pca, data, ~augment(.x, data = .y))) -> df_pca2
 ```
 
-```{r fig.height=12, fig.width=12}
+```{r, message = FALSE}
 df_pca2 %>% 
 mutate(
     pca_graph = map2(
@@ -139,14 +160,111 @@ mutate(
   pull(pca_graph)
 ```
 
+This shows some notable outliers in the first two PCs:
+```{r }
+df_au %>% 
+  mutate(outlier = case_when(.fittedPC1 >= 2.8 | .fittedPC1 <= -4.5 | abs(.fittedPC2 >= 4) ~ TRUE)) %>% 
+  filter(outlier == TRUE) -> df_outlier
+
+df_au %>% 
+  left_join(df_lookup %>% select(id, toi_all)) %>% 
+  ggplot(aes(.fittedPC1, .fittedPC2, size = toi_all)) +
+  geom_point(alpha = .5) +
+  geom_label_repel(data = df_outlier %>% filter(outlier == TRUE), aes(label = id), size = 4) +
+  scale_size_continuous("TOI") +
+  labs(title = "EvolvingWild GAA components")
+```
+
+These two graphs show the most extreme players as indicated by PC1:
 ```{r}
-au %>% 
-  rename(id = .rownames) %>% 
-  gather(variable, value, -c(id)) -> au_long
+df_au %>% 
+  left_join(df_lookup %>% select(id, position, toi_all)) %>% 
+  arrange(.fittedPC1) %>% 
+  mutate(id = factor(id)) %>% 
+  group_by(position) %>% 
+  top_n(10, .fittedPC1) %>% 
+  ggplot(aes(reorder(id, .fittedPC1), .fittedPC1, fill = toi_all)) +
+  geom_col(color = "black") +
+  coord_flip() +
+  facet_wrap(~position, 
+             scale = "free",
+             ncol = 2) +
+  scale_fill_viridis("TOI", label = comma) +
+  labs(title = "EvolvingWild GAA PCA",
+       subtitle = "Top 10 per position",
+       x = NULL,
+       y = "PC1")
+```
+```{r}
+df_au %>% 
+  left_join(df_lookup %>% select(id, position, toi_all)) %>% 
+  mutate(id = factor(id)) %>% 
+  group_by(position) %>% 
+  top_n(20, desc(.fittedPC1)) %>% 
+  ggplot(aes(reorder(id, desc(.fittedPC1)), .fittedPC1, fill = toi_all)) +
+  geom_col(color = "black") +
+  coord_flip() +
+  scale_y_reverse() +
+  facet_wrap(~position, 
+             scale = "free",
+             ncol = 2) +
+  scale_fill_viridis("TOI", label = comma) +
+  labs(title = "EvolvingWild GAA PCA",
+       subtitle = "Top 10 per position",
+       x = NULL,
+       y = "PC1")
+```
+
+These two graphs show the most extreme players as indicated by PC2:
+```{r}
+df_au %>% 
+  left_join(df_lookup %>% select(id, position, toi_all)) %>% 
+  arrange(.fittedPC2) %>% 
+  mutate(id = factor(id)) %>% 
+  group_by(position) %>% 
+  top_n(20, .fittedPC2) %>% 
+  ggplot(aes(reorder(id, .fittedPC2), .fittedPC2, fill = toi_all)) +
+  geom_col(color = "black") +
+  coord_flip() +
+  facet_wrap(~position, 
+             scale = "free",
+             ncol = 2) +
+  scale_fill_viridis("TOI", label = comma) +
+  labs(title = "EvolvingWild GAA PCA",
+       subtitle = "Top 10 per position",
+       x = NULL,
+       y = "PC2")
+```
+```{r}
+df_au %>% 
+  left_join(df_lookup %>% select(id, position, toi_all)) %>% 
+  arrange(desc(.fittedPC2)) %>% 
+  mutate(id = factor(id)) %>% 
+  group_by(position) %>% 
+  top_n(20, desc(.fittedPC2)) %>% 
+  ggplot(aes(reorder(id, desc(.fittedPC2)), .fittedPC2, fill = toi_all)) +
+  geom_col(color = "black") +
+  coord_flip() +
+  scale_y_reverse() +
+  facet_wrap(~position, 
+             scale = "free",
+             ncol = 2) +
+  scale_fill_viridis("TOI", label = comma) +
+  labs(title = "EvolvingWild GAA PCA",
+       subtitle = "Top 10 per position",
+       x = NULL,
+       y = "PC2")
 ```
 
 ```{r}
-au_long %>% 
+df_au %>% 
+  select(-id) %>% 
+  rename(id = .rownames) %>% 
+  gather(variable, value, -id) -> df_au_long
+```
+
+```{r}
+df_au_long %>% 
   filter(str_detect(variable, ".fitted")) %>% 
   spread(variable, value) %>% 
   select(-id) -> df_kmeans
@@ -175,22 +293,28 @@ clusterings <- kclusts %>%
   unnest(glanced, .drop = TRUE)
 ```
 
-```{r}
-p1 <- ggplot(assignments, aes(.fittedPC1, .fittedPC2)) +
-  geom_point(aes(color = .cluster), alpha = .2) + 
-  facet_wrap(~ k)
-p1
-```
-
+I tried to cluster the data using kmeans, but there is no obvious "elbow" in this plot, which you would typically use as the cutoff point for the number of clusters:
 ```{r}
 ggplot(clusterings, aes(k, tot.withinss)) +
   geom_line() +
   geom_point() +
-  scale_x_continuous(breaks = 1:9)
+  scale_x_continuous(breaks = 1:9) +
+  labs(y = "Total Within Sum of Squares",
+       x = "Number of clusters")
 ```
 
+This lack of clear distinction is shown when I tried to map the clusters to the data points:
 ```{r}
-au_long %>% 
+ggplot(assignments, aes(.fittedPC1, .fittedPC2)) +
+  geom_point(aes(color = .cluster), alpha = .2) + 
+  facet_wrap(~ str_c(k, " clusters")) +
+  scale_color_discrete("Number of clusters") +
+  labs(x = "PC1",
+       y = "PC2")
+```
+
+```{r eval = FALSE}
+df_au_long %>% 
   filter(str_detect(variable, ".fitted")) %>% 
   spread(variable, value) %>% 
   select(-id) -> df_kmeans
@@ -198,97 +322,17 @@ au_long %>%
 kclust <- kmeans(df_kmeans, centers = 2)
 
 kclust %>% 
-  augment(au_long %>% 
+  augment(df_au_long %>% 
     filter(str_detect(variable, ".fitted")) %>% 
     spread(variable, value)) %>% 
     left_join(df_lookup) -> df_kmeans
 ```
 
-```{r fig.height=12, fig.width=15}
-df_kmeans %>% 
-    mutate(outlier = case_when(abs(.fittedPC1) >= 4 | abs(.fittedPC2 >= 3.5) ~ TRUE)) %>% 
-  filter(outlier == TRUE) -> df_kmeans_outlier
-
-df_kmeans %>% 
-  ggplot(aes(.fittedPC1, .fittedPC2, color = position)) +
-  geom_point(alpha = .7) +
-  geom_label_repel(data = df_kmeans_outlier %>% filter(outlier == TRUE), aes(label = id), size = 4) +
-  labs(title = "EvolvingWild GAA",
-       subtitle = "EV/PP/SH GAA")
-```
-
-```{r}
-df_kmeans %>% 
-  arrange(.fittedPC1) %>% 
-  mutate(id = factor(id)) %>% 
-  group_by(position) %>% 
-  top_n(20, .fittedPC1) %>% 
-  ggplot(aes(reorder(id, .fittedPC1), .fittedPC1, alpha = gaa)) +
-  geom_col(color = "black") +
-  coord_flip() +
-  #scale_y_reverse() +
-  facet_wrap(~position, 
-             scale = "free",
-             ncol = 2) +
-  labs(title = "EvolvingWild GAR",
-       subtitle = "Top 20 per position in absolute principle component value")
-```
-
-```{r}
-df_kmeans %>% 
-  arrange(.fittedPC1) %>% 
-  mutate(id = factor(id)) %>% 
-  group_by(position) %>% 
-  top_n(20, desc(.fittedPC1)) %>% 
-  ggplot(aes(reorder(id, desc(.fittedPC1)), .fittedPC1, alpha = gaa)) +
-  geom_col(color = "black") +
-  coord_flip() +
-  scale_y_reverse() +
-  facet_wrap(~position, 
-             scale = "free",
-             ncol = 2) +
-  labs(title = "EvolvingWild GAA",
-       subtitle = "Top 20 per position in absolute principle component value")
-```
 
 
-```{r}
+```{r eval = FALSE}
 df_kmeans %>% 
-  arrange(desc(.fittedPC2)) %>% 
-  mutate(id = factor(id)) %>% 
-  group_by(position) %>% 
-  top_n(20, desc(.fittedPC2)) %>% 
-  ggplot(aes(reorder(id, desc(.fittedPC2)), .fittedPC2, alpha = gaa)) +
-  geom_col(color = "black") +
-  coord_flip() +
-  scale_y_reverse() +
-  facet_wrap(~position, 
-             scale = "free",
-             ncol = 2) +
-    labs(title = "EvolvingWild GAA",
-       subtitle = "Top 20 per position in absolute principle component value")
-```
-
-```{r}
-df_kmeans %>% 
-  arrange(.fittedPC2) %>% 
-  mutate(id = factor(id)) %>% 
-  group_by(position) %>% 
-  top_n(20, .fittedPC2) %>% 
-  ggplot(aes(reorder(id, .fittedPC2), .fittedPC2, alpha = gaa)) +
-  geom_col(color = "black") +
-  coord_flip() +
-  #scale_y_reverse() +
-  facet_wrap(~position, 
-             scale = "free",
-             ncol = 2) +
-    labs(title = "EvolvingWild GAA",
-       subtitle = "Top 20 per position in absolute principle component value")
-```
-
-```{r}
-df_kmeans %>% 
-  gather(pc, pc_value, -c(id, player, season, team, .cluster, position, gaa, .fittedPC1)) %>% 
+  gather(pc, pc_value, -c(id, player, season, team, .cluster, position, gaa, .fittedPC1, toi_all)) %>% 
   ggplot(aes(.fittedPC1, pc_value, color = .cluster)) +
   geom_point(alpha = .4) +
   facet_wrap(~pc)
@@ -303,7 +347,10 @@ df_kmeans %>%
   #geom_point(alpha = .2) +
   stat_density_2d(aes(fill = stat(level)), geom = "polygon") +
   #geom_label_repel()
-  facet_wrap(~season)
+  facet_wrap(~season) +
+  scale_fill_viridis("Density") +
+  labs(x = "PC1",
+       y = "PC2")
 ```
 
 ```{r}
@@ -344,12 +391,10 @@ ggplot(gapminder, aes(gdpPercap, lifeExp, size = pop, colour = country)) +
 
 df_kmeans %>% 
   filter(player == "SIDNEY.CROSBY") %>% 
-  ggplot(aes(.fittedPC1, .fittedPC2, label = season)) +
-  geom_point() +
+  ggplot(aes(.fittedPC1, .fittedPC2, label = season, group = player)) +
   geom_path() +
-  geom_label_repel(aes(alpha = season)) +
+  geom_label() +
   facet_wrap(~player) +
-  scale_alpha_discrete(range = c(.3, 1)) +
   #labs(title = "Player: {player}") +
   transition_time(as.integer(season)) +
   ease_aes("linear")
